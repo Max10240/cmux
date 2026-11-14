@@ -15,13 +15,17 @@ import UIKit.UIGestureRecognizerSubclass
 /// default alternate scroll), `altapp` (1049 + DECCKM, application cursor),
 /// `alt1007off` (1049 + DECRST 1007), `shell` (the primary screen with 400
 /// lines of output), `widealt` / `widemouse` (`alt` / `mouse` on a 120×40
-/// Mac grid, wider than the phone).
+/// Mac grid, wider than the phone); and two more primary-screen programs:
+/// `stream` (a build log streaming a line every 60 ms) and `inline` (an
+/// agent-style inline frame, like Claude Code's inline mode: bracketed paste,
+/// focus reports, cursor hidden, a 5-row frame redrawn in place under its
+/// transcript on the primary screen).
 @MainActor
 public final class TerminalDragScrollEvidenceSession: TerminalSession {
     public enum Mode: String, CaseIterable, Sendable {
-        case mouse, alt, altapp, alt1007off, shell, widealt, widemouse
+        case mouse, alt, altapp, alt1007off, shell, widealt, widemouse, stream, inline
 
-        var alternate: Bool { self != .shell }
+        var alternate: Bool { ![.shell, .stream, .inline].contains(self) }
         var mouse: Bool { self == .mouse || self == .widemouse }
         var wide: Bool { self == .widealt || self == .widemouse }
         /// What the program writes on entering its screen.
@@ -31,7 +35,8 @@ public final class TerminalDragScrollEvidenceSession: TerminalSession {
             case .alt, .widealt: "\u{1B}[?1049h"
             case .altapp: "\u{1B}[?1049h\u{1B}[?1h\u{1B}="
             case .alt1007off: "\u{1B}[?1049h\u{1B}[?1007l"
-            case .shell: ""
+            case .shell, .stream: ""
+            case .inline: "\u{1B}[?2004h\u{1B}[?1004h\u{1B}[?2031h\u{1B}[?25l"
             }
         }
     }
@@ -49,6 +54,7 @@ public final class TerminalDragScrollEvidenceSession: TerminalSession {
     private var top = 200
     private var pending: [UInt8] = []
     private let started = CACurrentMediaTime()
+    private var ticker: Task<Void, Never>?
 
     // What the phone sent, for the UI test (``bytesLabel``).
     private(set) var totalBytes = 0
@@ -73,14 +79,62 @@ public final class TerminalDragScrollEvidenceSession: TerminalSession {
             handler(.title("\(programName) — evidence"))
             render()
         } else {
-            handler(.title("zsh — evidence"))
-            var text = "\u{1B}c"
-            for line in 1...documentLines {
-                text += String(format: "out %04d \u{1B}[3%dm%@\u{1B}[0m\r\n", line, 1 + line % 6, String(repeating: "#", count: line % 30))
+            handler(.title(mode == .shell ? "zsh — evidence" : "\(mode.rawValue) — evidence"))
+            var text = "\u{1B}c" + mode.modes
+            let word = mode == .inline ? "⏺ answer" : mode == .stream ? "build" : "out"
+            for line in 1...(mode == .shell ? documentLines : 200) {
+                text += String(format: "%@ %04d \u{1B}[3%dm%@\u{1B}[0m\r\n", word, line, 1 + line % 6, String(repeating: "#", count: line % 30))
             }
-            text += "\u{1B}[32m❯\u{1B}[0m "
-            write(text)
+            switch mode {
+            case .shell:
+                text += "\u{1B}[32m❯\u{1B}[0m "
+                write(text)
+            case .stream:
+                write(text)
+                startStream()
+            default:
+                write(text + inlineFrame(tick: 0, first: true))
+                startInline()
+            }
         }
+    }
+
+    /// `stream`: a build log, one numbered line every 60 ms (3000 lines).
+    private func startStream() {
+        ticker = Task { [weak self] in
+            for line in 201...3200 {
+                guard let self, !Task.isCancelled else { return }
+                self.write(String(format: "build %04d \u{1B}[3%dmcompiling crate_%03d\u{1B}[0m %@\r\n", line, 1 + line % 6, line % 997, String(repeating: ".", count: line % 30)))
+                try? await ContinuousClock().sleep(for: .milliseconds(60))
+            }
+        }
+    }
+
+    /// `inline`: the frame under the transcript, redrawn in place every 400 ms.
+    private func startInline() {
+        ticker = Task { [weak self] in
+            var tick = 1
+            while let self, !Task.isCancelled {
+                try? await ContinuousClock().sleep(for: .milliseconds(400))
+                self.write(self.inlineFrame(tick: tick, first: false))
+                tick += 1
+            }
+        }
+    }
+
+    private func inlineFrame(tick: Int, first: Bool) -> String {
+        let spinner = ["·", "✢", "✳", "✶", "✻", "✽"][tick % 6]
+        let width = max(10, min(columns, 60) - 2)
+        let rule = String(repeating: "─", count: width)
+        let lines = [
+            "\u{1B}[33m\(spinner) Thinking… (\(tick / 2 + 1)s · esc to interrupt)\u{1B}[0m",
+            "╭\(rule)╮",
+            "│ > " + String(repeating: " ", count: max(0, width - 3)) + "│",
+            "╰\(rule)╯",
+            "  ? for shortcuts   inline frame tick \(tick)",
+        ]
+        // Back to the frame's first row, then each row cleared and drawn.
+        return (first ? "" : "\r\u{1B}[4A") + lines.map { "\u{1B}[2K" + $0 }.joined(separator: "\r\n")
     }
 
     public func send(_ bytes: Data) {
@@ -99,7 +153,10 @@ public final class TerminalDragScrollEvidenceSession: TerminalSession {
         if mode.alternate { render() }
     }
 
-    public func stop() { handler = nil }
+    public func stop() {
+        ticker?.cancel()
+        handler = nil
+    }
 
     // MARK: Input
 

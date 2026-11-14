@@ -86,12 +86,7 @@ final class TerminalDragScrollUITests: XCTestCase {
     }
 
     @MainActor func test5PrimaryScreenShell() {
-        let app = launch("shell")
-        slow(app, "s5-shell-slow-drag-down", from: 0.3, to: 0.6)
-        slow(app, "s5-shell-slow-drag-up", from: 0.6, to: 0.3)
-        fling(app, "s5-shell-fling-down", from: 0.3, to: 0.55)
-        fling(app, "s5-shell-fling-up", from: 0.6, to: 0.35)
-        app.terminate()
+        primaryScreen(launch("shell"), "s5-shell")
     }
 
     @MainActor func test6WideGridHorizontalPan() {
@@ -107,6 +102,35 @@ final class TerminalDragScrollUITests: XCTestCase {
         horizontal(app, "s6-widemouse-horizontal-pan-left", from: 0.85, to: 0.15)
         horizontal(app, "s6-widemouse-horizontal-pan-right", from: 0.15, to: 0.85)
         slow(app, "s6-widemouse-vertical-drag-control", from: 0.3, to: 0.6)
+        app.terminate()
+    }
+
+    @MainActor func test8PrimaryScreenStreamingBuildLog() {
+        primaryScreen(launch("stream"), "s5-stream")
+    }
+
+    @MainActor func test9PrimaryScreenInlineAgentFrame() {
+        primaryScreen(launch("inline"), "s5-inline")
+    }
+
+    /// A program on the primary screen: drags and flings scroll the phone's
+    /// scrollback (0 bytes to the remote), the view holds while output
+    /// arrives, Jump to bottom brings it back and it follows again.
+    @MainActor private func primaryScreen(_ app: XCUIApplication, _ prefix: String) {
+        record(app, "\(prefix)-follow-at-rest", settle: 2) {}
+        slow(app, "\(prefix)-slow-drag-down", from: 0.3, to: 0.6)
+        record(app, "\(prefix)-held-while-output-arrives", settle: 2) {}
+        fling(app, "\(prefix)-fling-down", from: 0.3, to: 0.55)
+        slow(app, "\(prefix)-slow-drag-up", from: 0.6, to: 0.4)
+        fling(app, "\(prefix)-fling-up", from: 0.6, to: 0.4)
+        slow(app, "\(prefix)-slow-drag-down-again", from: 0.3, to: 0.6)
+        let jump = app.buttons["terminal.jumpToBottom"]
+        summary.append("\(prefix): Jump to bottom shown before its tap: \(jump.exists)")
+        record(app, "\(prefix)-jump-to-bottom", settle: 2) {
+            if jump.exists { jump.tap() }
+        }
+        summary.append("\(prefix): Jump to bottom shown after its tap: \(jump.exists)")
+        record(app, "\(prefix)-follow-after-jump", settle: 2) {}
         app.terminate()
     }
 
@@ -262,7 +286,14 @@ final class TerminalDragScrollUITests: XCTestCase {
             let deltas = ["n", "c", "wu", "wd", "au", "ad", "click", "mv", "other"].map { key in
                 "\(key)+\((reading.counts[key] ?? 0) - (previous.counts[key] ?? 0))"
             }.joined(separator: " ")
+            func field(_ state: String, _ key: String) -> String {
+                guard let range = state.range(of: " " + key + "=") else { return "-" }
+                return String(state[range.upperBound...].prefix { $0 != " " })
+            }
             let top = "top \(previous.counts["top"] ?? 0)->\(reading.counts["top"] ?? 0)"
+                + " | page sb \(field(previous.state, "sb"))->\(field(reading.state, "sb"))"
+                + " off \(field(previous.state, "off"))->\(field(reading.state, "off"))"
+                + " follow \(field(previous.state, "follow"))->\(field(reading.state, "follow"))"
             let chunks = Array(reading.chunks.dropFirst(previous.chunks.count))
             let window = reading.hitchList.filter { $0.at > previous.now && $0.at <= reading.now }
             let line = "\(name) [\(readings[index - 1].0) -> \(label)]: \(deltas) \(top) | frames+\(reading.frames - previous.frames) hitches+\(reading.hitches - previous.hitches) worst=\(String(format: "%.1f", window.map(\.ms).max() ?? 0)) ms"
