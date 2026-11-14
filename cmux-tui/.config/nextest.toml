@@ -220,3 +220,9 @@ success-output = "final"
 [[profile.ci.overrides]]
 filter = 'binary_id(cmux-tui-core) & test(/^mux::tests::journal_seal_cost::/)'
 success-output = "final"
+
+# NEVER MERGE: one run of the 826-workspace retention bound case on a Mac (232 to 238 s there).
+[[profile.ci.overrides]]
+filter = 'binary_id(cmux-tui-core) & test(=mux::tests::journal_retention_bound::journal_bookkeeping_is_bounded_on_826_workspaces)'
+slow-timeout = { period = "60s", terminate-after = 8, grace-period = "5s" }
+success-output = "final"

@@ -365,7 +365,6 @@ fn journal_bookkeeping_is_bounded_on_60_workspaces() {
 /// holds (203 s; one checkpoint cost 233 to 593 ms there), not the delete
 /// (3.2 s for 3,214 holds, the longest 22 ms). Linux runs this case in 39 s.
 #[test]
-#[cfg_attr(target_os = "macos", ignore = "232 to 238 s on a fleet Mac; the suite's limit is 120 s")]
 fn journal_bookkeeping_is_bounded_on_826_workspaces() {
     journal_bookkeeping_is_bounded(826);
 }
