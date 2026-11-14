@@ -44,6 +44,12 @@ final class TerminalDragScrollUITests: XCTestCase {
             self.drag(app, from: 0.3, to: 0.55, velocity: 400, hold: 0)
             self.point(app, 0.45).tap()
         }
+        idle(1.5)
+        record(app, "s6-mouse-drag-then-tap-after-0.7s", settle: 2) {
+            self.drag(app, from: 0.3, to: 0.55, velocity: 400, hold: 0)
+            self.idle(0.7)
+            self.point(app, 0.45).tap()
+        }
         flingThenTap(app, "s6-mouse-fling-then-tap")
         app.terminate()
     }
@@ -192,6 +198,8 @@ final class TerminalDragScrollUITests: XCTestCase {
         var hitches: Int
         var frames: Int
         var hitchList: [(at: Double, ms: Double)]
+        /// Finger events from the app's passive touch log: kind (d, u, x) and app seconds.
+        var touches: [(kind: Character, at: Double, raw: String)]
     }
 
     @MainActor private func read(_ app: XCUIApplication) -> Reading {
@@ -217,8 +225,17 @@ final class TerminalDragScrollUITests: XCTestCase {
                 if pair.count == 2 { list.append((pair[0], pair[1])) }
             }
         }
+        var touches: [(Character, Double, String)] = []
+        if let range = state.range(of: "touches=") {
+            let rest = state[range.upperBound...].prefix { $0 != " " }
+            for item in rest.split(separator: ",") {
+                guard let kind = item.first, let at = Double(item.dropFirst().prefix { $0 != "@" }) else { continue }
+                touches.append((kind, at, String(item)))
+            }
+        }
         return Reading(header: header, counts: counts, chunks: parts, state: state, now: number("now") ?? 0,
-                       hitches: Int(number("hitches") ?? 0), frames: Int(number("frames") ?? 0), hitchList: list)
+                       hitches: Int(number("hitches") ?? 0), frames: Int(number("frames") ?? 0), hitchList: list,
+                       touches: touches)
     }
 
     /// One gesture: a reading and screenshot before, the gesture, `settle`
@@ -253,6 +270,31 @@ final class TerminalDragScrollUITests: XCTestCase {
             text += "  delta: \(deltas) \(top)\n"
             text += "  pacing: frames+\(reading.frames - previous.frames) hitches+\(reading.hitches - previous.hitches)"
                 + " hitches in window: " + (window.isEmpty ? "none" : window.map { String(format: "%.3f s %.1f ms", $0.at, $0.ms) }.joined(separator: ", ")) + "\n"
+            // The fingers in this window, and the frames from the first touch to
+            // the last touch or byte (the gesture and its fling, not the
+            // test's screenshots and reads around it).
+            let touches = reading.touches.filter { $0.at > previous.now && $0.at <= reading.now }
+            let chunkTimes = chunks.compactMap { Double($0.prefix { $0 != ":" }) }
+            text += "  touches: " + (touches.isEmpty ? "none" : touches.map(\.raw).joined(separator: ", ")) + "\n"
+            if let first = touches.first?.at {
+                let last = max(touches.last?.at ?? first, chunkTimes.max() ?? first)
+                let during = reading.hitchList.filter { $0.at >= first && $0.at <= last + 0.05 }
+                text += String(format: "  in-gesture span %.3f-%.3f s (%.0f ms): hitches %d", first, last, (last - first) * 1000, during.count)
+                    + (during.isEmpty ? "" : ": " + during.map { String(format: "%.3f s %.1f ms", $0.at, $0.ms) }.joined(separator: ", ")) + "\n"
+                summary.append("  \(name) in-gesture: \(String(format: "%.0f", (last - first) * 1000)) ms, hitches \(during.count), worst \(String(format: "%.1f", during.map(\.ms).max() ?? 0)) ms")
+            }
+            // Each finger down: how long after the last scroll byte the phone sent.
+            let all = reading.chunks.compactMap { chunk -> Double? in
+                let scroll = ["<64;", "<65;", "\\e[A", "\\e[B", "\\eOA", "\\eOB"].contains { chunk.contains($0) }
+                return scroll ? Double(chunk.prefix { $0 != ":" }) : nil
+            }
+            for down in touches where down.kind == "d" {
+                if let wheel = all.last(where: { $0 < down.at }) {
+                    let line = String(format: "  touch down at %.3f s: %.0f ms after the last scroll byte (%.3f s)", down.at, (down.at - wheel) * 1000, wheel)
+                    text += line + "\n"
+                    summary.append("  \(name)" + line)
+                }
+            }
             text += "  bytes the phone sent (\(chunks.count) writes, app-seconds:escaped bytes):\n"
             text += chunks.isEmpty ? "    (none)\n" : chunks.map { "    " + $0 }.joined(separator: "\n") + "\n"
         }

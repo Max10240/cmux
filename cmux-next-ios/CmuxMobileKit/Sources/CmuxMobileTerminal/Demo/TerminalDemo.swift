@@ -72,6 +72,7 @@ public struct TerminalDemoRoot: View {
             if let evidence {
                 evidencePacing.start()
                 while !Task.isCancelled {
+                    evidencePacing.logTouches()
                     evidenceBytes = evidence.bytesLabel
                     evidenceState = String(format: "now=%.3f ", evidence.now) + "pacing " + evidencePacing.label
                         + " ␞ debugState " + model.debugState

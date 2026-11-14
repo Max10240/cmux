@@ -2,6 +2,8 @@
 #if os(iOS) && DEBUG
 import Foundation
 import QuartzCore
+import UIKit
+import UIKit.UIGestureRecognizerSubclass
 
 /// DEBUG evidence harness for T-SCROLL-12 (PR #42798): a terminal that needs
 /// no Mac, put into one terminal mode by
@@ -187,13 +189,52 @@ public final class TerminalDragScrollEvidenceSession: TerminalSession {
     }
 }
 
+/// DEBUG: when each finger went down and up (seconds on the pacing clock),
+/// for the evidence harness. Passive: it never recognizes, delays or cancels
+/// a touch, so the terminal's own gestures see exactly what they would.
+@MainActor
+final class TerminalDragScrollTouchLog: UIGestureRecognizer, UIGestureRecognizerDelegate {
+    private let origin: CFTimeInterval
+    private(set) var events: [String] = []
+
+    init(origin: CFTimeInterval) {
+        self.origin = origin
+        super.init(target: nil, action: nil)
+        cancelsTouchesInView = false
+        delaysTouchesBegan = false
+        delaysTouchesEnded = false
+        delegate = self
+    }
+
+    private func log(_ kind: String, _ touches: Set<UITouch>) {
+        let point = touches.first.map { $0.location(in: view) } ?? .zero
+        events.append(String(format: "%@%.3f@%.0f;%.0f", kind, CACurrentMediaTime() - origin, point.x, point.y))
+        if events.count > 400 { events.removeFirst() }
+    }
+
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) { log("d", touches) }
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) {
+        log("u", touches)
+        state = .failed
+    }
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) {
+        log("x", touches)
+        state = .failed
+    }
+
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool { true }
+
+    var label: String { "touches=" + events.joined(separator: ",") }
+}
+
 /// DEBUG: every display frame's interval on the main run loop, for the
 /// evidence harness (a hitch is a frame later than 1.5 display intervals).
 @MainActor
 final class TerminalDragScrollPacing: NSObject {
     private var link: CADisplayLink?
     private var previous: CFTimeInterval = 0
-    private let started = CACurrentMediaTime()
+    let started = CACurrentMediaTime()
+    private var touchLog: TerminalDragScrollTouchLog?
     private(set) var frames = 0
     private(set) var hitches = 0
     private(set) var longestMs = 0.0
@@ -206,6 +247,15 @@ final class TerminalDragScrollPacing: NSObject {
         link.preferredFrameRateRange = .terminal
         link.add(to: .main, forMode: .common)
         self.link = link
+    }
+
+    /// Puts the passive touch log on the app's window (once it has one).
+    func logTouches() {
+        guard touchLog == nil, let window = UIApplication.shared.connectedScenes
+            .compactMap({ $0 as? UIWindowScene }).flatMap(\.windows).first(where: \.isKeyWindow) else { return }
+        let log = TerminalDragScrollTouchLog(origin: started)
+        window.addGestureRecognizer(log)
+        touchLog = log
     }
 
     @objc private func step(_ link: CADisplayLink) {
@@ -226,6 +276,7 @@ final class TerminalDragScrollPacing: NSObject {
     var label: String {
         "frames=\(frames) hitches=\(hitches) longestMs=\(String(format: "%.1f", longestMs)) list="
             + hitchList.map { String(format: "%.3f/%.1f", $0.at, $0.ms) }.joined(separator: ",")
+            + " " + (touchLog?.label ?? "touches=")
     }
 }
 #endif
