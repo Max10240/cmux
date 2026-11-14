@@ -12,9 +12,22 @@ public struct TerminalDemoRoot: View {
     @State private var model: TerminalModel
     @State private var host: TerminalTabHost
 
+    /// The drag-scroll evidence harness (`-CmuxDragScrollEvidence MODE`).
+    @State private var evidence: TerminalDragScrollEvidenceSession?
+    @State private var evidencePacing = TerminalDragScrollPacing()
+    @State private var evidenceBytes = ""
+    @State private var evidenceState = ""
+
     public init() {
-        let session: any TerminalSession = TerminalHostGridDemoSession.requestedSpec
-            .flatMap(TerminalHostGridDemoSession.init(spec:)) ?? MockTerminalSession()
+        let evidence = TerminalDragScrollEvidenceSession.requestedMode.map(TerminalDragScrollEvidenceSession.init(mode:))
+        _evidence = State(initialValue: evidence)
+        let session: any TerminalSession
+        if let evidence {
+            session = evidence
+        } else {
+            session = TerminalHostGridDemoSession.requestedSpec
+                .flatMap(TerminalHostGridDemoSession.init(spec:)) ?? MockTerminalSession()
+        }
         let model = TerminalModel(session: session, artifactSource: MockArtifactSource(), title: "zsh — cmux-next")
         _model = State(initialValue: model)
         _host = State(initialValue: TerminalTabHost(model: model))
@@ -44,7 +57,28 @@ public struct TerminalDemoRoot: View {
                 .allowsHitTesting(false)
                 .accessibilityIdentifier("debug.terminal-demo")
         }
+        .overlay(alignment: .topTrailing) {
+            if evidence != nil {
+                VStack {
+                    Text(".").foregroundStyle(.clear).allowsHitTesting(false)
+                        .accessibilityLabel(evidenceBytes).accessibilityIdentifier("debug.dragscroll.bytes")
+                    Text(".").foregroundStyle(.clear).allowsHitTesting(false)
+                        .accessibilityLabel(evidenceState).accessibilityIdentifier("debug.dragscroll.state")
+                }
+            }
+        }
         .task {
+            // The evidence harness: no scripted phases; its labels follow the session.
+            if let evidence {
+                evidencePacing.start()
+                while !Task.isCancelled {
+                    evidenceBytes = evidence.bytesLabel
+                    evidenceState = String(format: "now=%.3f ", evidence.now) + "pacing " + evidencePacing.label
+                        + " ␞ debugState " + model.debugState
+                    try? await ContinuousClock().sleep(for: .milliseconds(200))
+                }
+                return
+            }
             // The host grid demo is a still: no scripted phases.
             guard TerminalHostGridDemoSession.requestedSpec == nil else { return }
             let phases = UserDefaults.standard.string(forKey: "CmuxMobileTerminalDemoPhases")?
