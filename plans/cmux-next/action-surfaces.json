@@ -62353,7 +62353,7 @@
       "source" : "CmuxNextAgentPane\/AgentPaneContextMenu.swift"
     },
     {
-      "name" : "paneToolbarMore",
+      "name" : "paneTabBarRows",
       "source" : "CmuxNextApp\/PaneToolbar.swift"
     },
     {
