@@ -27,13 +27,13 @@ import Testing
         return try JSONDecoder().decode(DaemonIdentity.self, from: Data(json.utf8))
     }
 
-    @Test func theTopBarOffersNoCreationButtonsOnlyItsMoreMenu() {
+    @Test func theTopBarOffersNoButtonsOfItsOwn() {
         let registry = ActionRegistry.standard()
-        let toolbar = PaneToolbar(registry: { registry }, newTabMenu: { nil }, paneTarget: ActionTargetRef(kind: .pane, id: "sample-pane"))
+        let toolbar = PaneToolbar(registry: { registry }, paneTarget: ActionTargetRef(kind: .pane, id: "sample-pane"))
         toolbar.update(target: "sample-terminal", kind: .terminal)
-        #expect(toolbar.view.items.isEmpty, "the terminal and browser buttons repeat the + menu, which the ⋮ menu holds")
+        #expect(toolbar.view.items.isEmpty, "the terminal and browser buttons repeat the + menu")
         #expect(toolbar.view.buttons.isEmpty)
-        #expect(toolbar.view.hasMore, "the ⋮ stays for the pane's actions")
+        #expect(toolbar.view.intrinsicContentSize.width == 0, "no \"…\" either: the pane's actions are the tab bar's right-click")
     }
 
     /// Relaunch (Leo 2026-11-04: "too many layout shifts/flicker renderings"): a restored pane's toolbar was empty at its
