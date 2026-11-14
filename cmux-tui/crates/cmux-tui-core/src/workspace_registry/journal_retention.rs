@@ -269,7 +269,7 @@ fn retention_limit(connection: &Connection) -> anyhow::Result<u64> {
         Ok(value.map(u64::try_from).transpose()?)
     };
     // No checkpoint: nothing proves a restore can do without the records.
-    let Some(mut limit) = minimum("SELECT MIN(source_sequence) FROM journal_checkpoints")? else {
+    let Some(mut limit) = minimum("SELECT MAX(source_sequence) FROM journal_checkpoints")? else {
         return Ok(0);
     };
     let roster_rebuilds = connection
@@ -476,9 +476,9 @@ impl WorkspaceRegistry {
                 .prepare_cached(&format!(
                     "DELETE FROM {table} WHERE ({key}) IN (
                        SELECT {key} FROM {table} WHERE {column} <= ?1
-                       ORDER BY {key} LIMIT ?2)"
+                       ORDER BY {key})"
                 ))?
-                .execute(params![end, i64::try_from(left)?])?;
+                .execute(params![end])?;
             left = left.saturating_sub(u64::try_from(deleted)?);
             #[cfg(test)]
             {
